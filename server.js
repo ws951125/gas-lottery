@@ -21,35 +21,24 @@ const app = express();
 app.use(bodyParser.json());
 
 // 1) 從環境變數讀取
-const SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT;
-const SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT;
+const sheetId = process.env.GOOGLE_SHEET_ID;
 
-// 解析 Service Account JSON
 let serviceAccount;
 try {
-  serviceAccount = JSON.parse(SERVICE_ACCOUNT_JSON);
+  serviceAccount = JSON.parse(rawJson);
+  // 這步很重要：將字串中的 '\\n' 轉成真正的換行
+  serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
 } catch (err) {
-  console.error('無法解析 GOOGLE_SERVICE_ACCOUNT JSON：', err);
+  console.error('無法解析或處理 Service Account JSON:', err);
 }
 
-// 建立 GoogleSpreadsheet 實例
-const doc = new GoogleSpreadsheet(SHEET_ID);
-
-/**
- * 初始化：使用 Service Account 認證並載入試算表
- */
-async function initSheet() {
-  if (!serviceAccount || !serviceAccount.client_email || !serviceAccount.private_key) {
-    throw new Error('Service Account JSON 格式不正確，請確認環境變數。');
-  }
-  // 使用 service account 授權
-  await doc.useServiceAccountAuth({
-    client_email: serviceAccount.client_email,
-    private_key: serviceAccount.private_key,
-  });
-  // 載入整份試算表資訊
-  await doc.loadInfo();
-}
+// 然後初始化
+await doc.useServiceAccountAuth({
+  client_email: serviceAccount.client_email,
+  private_key: serviceAccount.private_key,
+});
+await doc.loadInfo();
 
 /**
  * 從「設定」工作表中取出指定 name 的 value
