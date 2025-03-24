@@ -15,38 +15,45 @@ const app = express();
 app.use(bodyParser.json());
 
 // 從環境變數讀取
-const SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT;
-const SHEET_ID = process.env.GOOGLE_SHEET_ID;
+// 1) 先讀取環境變數
+const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT; 
+const sheetId = process.env.GOOGLE_SHEET_ID;
 
-// 解析 Service Account JSON （含 private_key）
+// 2) 解析 JSON
 let serviceAccount;
 try {
-  serviceAccount = JSON.parse(SERVICE_ACCOUNT_JSON);
-  // 將 private_key 內的 '\\n' 轉成真正的換行 (若還是多行就可省略這步)
+  serviceAccount = JSON.parse(rawJson);
+  // 3) 把字串中的 '\\n' 轉回真正的換行字元
   if (serviceAccount.private_key) {
     serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
   }
 } catch (err) {
-  console.error('無法解析 GOOGLE_SERVICE_ACCOUNT：', err);
+  console.error('JSON 解析失敗', err);
 }
 
-// 建立 GoogleSpreadsheet 實例
-const doc = new GoogleSpreadsheet(SHEET_ID);
+// 4) 建立 GoogleSpreadsheet 實例
+const doc = new GoogleSpreadsheet(sheetId);
 
-/**
- * 用 async function 包裝初始化流程 (Node 10.x 不允許頂層 await)
- */
 async function initSheet() {
-  if (!serviceAccount || !serviceAccount.client_email || !serviceAccount.private_key) {
-    throw new Error('Service Account JSON 格式不正確，請確認環境變數。');
-  }
+  // 5) 使用 Service Account Auth
   await doc.useServiceAccountAuth({
     client_email: serviceAccount.client_email,
-    private_key: serviceAccount.private_key,
+    private_key: serviceAccount.private_key
   });
   await doc.loadInfo();
-  console.log('✅ 已成功載入 Google 試算表');
+  console.log('✅ 已成功載入 Google 試算表：', doc.title);
 }
+
+// 後續再搭配您的路由 / Express 伺服器
+
+initSheet()
+  .then(() => {
+    // 伺服器啟動邏輯 ...
+  })
+  .catch(err => {
+    console.error('❌ 初始化失敗', err);
+    process.exit(1);
+  });
 
 /**
  * 從「設定」工作表中取出指定 name 的 value
