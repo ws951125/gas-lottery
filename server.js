@@ -14,9 +14,13 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
+const cors = require('cors');
 
 const app = express();
 app.use(bodyParser.json());
+
+
+app.use(cors());
 
 // 從環境變數讀取：email / private_key / sheetId
 const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
