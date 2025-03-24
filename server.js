@@ -58,10 +58,16 @@ async function initSheet() {
 async function getSettingValue(name) {
   const sheet = doc.sheetsByTitle['設定'];
   if (!sheet) throw new Error("找不到名為「設定」的工作表");
+
   const rows = await sheet.getRows();
-  const row = rows.find(r => r.name === name);
-  return row ? row.value : '';
+  // ✅ 如果原本是 r.name === name，就得改成 r["項目"] === name
+  const row = rows.find(r => r["項目"] === name);
+
+  // ✅ 回傳 r["設定值"] 而非 r.value
+  return row ? row["設定值"] : '';
 }
+
+
 
 /**
  * 讀取「獎項設定」表的獎項 (name, rate)
@@ -83,7 +89,7 @@ async function checkDrawOnDeadline(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
-  const deadline = await getSettingValue('deadline');
+  const deadline = await getSettingValue('活動截止日');
   if (!deadline) {
     return { exists: false };
   }
@@ -151,7 +157,7 @@ async function queryHistory(phone) {
  ******************************************/
 app.get('/api/title', async (req, res) => {
   try {
-    const title = await getSettingValue('title');
+    const title = await getSettingValue('抽獎活動標題');
     res.send(title || '(未設定)');
   } catch (err) {
     console.error(err);
@@ -161,7 +167,7 @@ app.get('/api/title', async (req, res) => {
 
 app.get('/api/deadline', async (req, res) => {
   try {
-    const deadline = await getSettingValue('deadline');
+    const deadline = await getSettingValue('活動截止日');
     res.send(deadline || '');
   } catch (err) {
     console.error(err);
