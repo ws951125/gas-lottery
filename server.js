@@ -20,7 +20,9 @@ const app = express();
 app.use(bodyParser.json());
 
 
-app.use(cors());
+//app.use(cors());  //所有網域都可以連
+app.use(cors({ origin: 'https://pro6899.onrender.com' })); //限制網域可連
+
 
 // 從環境變數讀取：email / private_key / sheetId
 const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
