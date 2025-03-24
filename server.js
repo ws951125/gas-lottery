@@ -150,7 +150,7 @@ async function queryHistory(phone) {
   const normalizedPhone = phone.replace(/^0+/, '');
   
   return rows
-    .filter(r => r['電話號碼'] === phone)
+    .filter(r => r['電話號碼'] === normalizedPhone)
     .map(r => ({
       time: r['抽獎時間'] || '',
       phone: r['電話號碼'] || '',
