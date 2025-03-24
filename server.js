@@ -119,6 +119,11 @@ async function checkDrawOnDeadline(phone) {
 /**
  * 寫入抽獎紀錄 (只寫 A/B/C 三欄)
  */
+function normalizePhone(phone) {
+  // 移除前面所有 0
+  return phone.replace(/^0+/, '');
+}
+
 async function recordDraw(phone, prize) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
@@ -141,6 +146,9 @@ async function queryHistory(phone) {
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
   const rows = await sheet.getRows();
+  
+  const normalizedPhone = phone.replace(/^0+/, '');
+  
   return rows
     .filter(r => r['電話號碼'] === phone)
     .map(r => ({
