@@ -1,10 +1,14 @@
 /****************************************************
- * server.js - 使用「獎項設定」「抽獎紀錄」「設定」 三個工作表
- *    儲存與讀取抽獎資料；相容 Node.js 10+ (無頂層 await)
+ * server.js - 分開儲存 client_email / private_key
+ *   使用三個工作表：
+ *     - 獎項設定: name, rate
+ *     - 抽獎紀錄: A=抽獎時間, B=電話號碼, C=中獎獎項, D=到期日, E=兌獎日期
+ *     - 設定: name, value (包含 title / deadline)
  *
- * 需設定 2 個環境變數：
- *   - GOOGLE_SERVICE_ACCOUNT（整段 JSON 字串）
- *   - GOOGLE_SHEET_ID（試算表 ID）
+ * 環境變數需設：
+ *   - GOOGLE_CLIENT_EMAIL (e.g. lottery-service@xxx.iam.gserviceaccount.com)
+ *   - GOOGLE_PRIVATE_KEY  (帶整個 PEM)
+ *   - GOOGLE_SHEET_ID     (您的試算表ID)
  ****************************************************/
 
 const express = require('express');
@@ -14,49 +18,38 @@ const { GoogleSpreadsheet } = require('google-spreadsheet');
 const app = express();
 app.use(bodyParser.json());
 
-// 從環境變數讀取
-// 1) 先讀取環境變數
-const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT; 
-const sheetId = process.env.GOOGLE_SHEET_ID;
+// 從環境變數讀取：email / private_key / sheetId
+const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
+let PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
+const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
-// 2) 解析 JSON
-let serviceAccount;
-try {
-  serviceAccount = JSON.parse(rawJson);
-  // 3) 把字串中的 '\\n' 轉回真正的換行字元
-  if (serviceAccount.private_key) {
-    serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
-  }
-} catch (err) {
-  console.error('JSON 解析失敗', err);
+// 如果 Render 後台把真正換行變成 \n，您可再 replace 回來
+// （若本身就已經是多行 PEM，則可省略這行）
+if (PRIVATE_KEY) {
+  PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, '\n');
 }
 
-// 4) 建立 GoogleSpreadsheet 實例
-const doc = new GoogleSpreadsheet(sheetId);
+// 建立 GoogleSpreadsheet 實例
+const doc = new GoogleSpreadsheet(SHEET_ID);
 
+/**
+ * 初始化 Google Sheet (Node.js 10.x 不允許頂層 await，所以用函式包裝)
+ */
 async function initSheet() {
-  // 5) 使用 Service Account Auth
+  if (!CLIENT_EMAIL || !PRIVATE_KEY) {
+    throw new Error('缺少 GOOGLE_CLIENT_EMAIL 或 GOOGLE_PRIVATE_KEY');
+  }
+
   await doc.useServiceAccountAuth({
-    client_email: serviceAccount.client_email,
-    private_key: serviceAccount.private_key
+    client_email: CLIENT_EMAIL,
+    private_key: PRIVATE_KEY,
   });
   await doc.loadInfo();
   console.log('✅ 已成功載入 Google 試算表：', doc.title);
 }
 
-// 後續再搭配您的路由 / Express 伺服器
-
-initSheet()
-  .then(() => {
-    // 伺服器啟動邏輯 ...
-  })
-  .catch(err => {
-    console.error('❌ 初始化失敗', err);
-    process.exit(1);
-  });
-
 /**
- * 從「設定」工作表中取出指定 name 的 value
+ * 讀取「設定」表中指定 name 的 value
  */
 async function getSettingValue(name) {
   const sheet = doc.sheetsByTitle['設定'];
@@ -67,7 +60,7 @@ async function getSettingValue(name) {
 }
 
 /**
- * 從「獎項設定」工作表讀取獎項列表
+ * 讀取「獎項設定」表的獎項 (name, rate)
  */
 async function getPrizesData() {
   const sheet = doc.sheetsByTitle['獎項設定'];
@@ -80,7 +73,7 @@ async function getPrizesData() {
 }
 
 /**
- * 檢查是否在 deadline 那天已經抽過獎
+ * 檢查是否在 deadline 那天已經抽過獎 (抽獎紀錄)
  */
 async function checkDrawOnDeadline(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
@@ -90,7 +83,6 @@ async function checkDrawOnDeadline(phone) {
   if (!deadline) {
     return { exists: false };
   }
-  // 以 yyyy-mm-ddT00:00:00 解析
   const dlDate = new Date(deadline + 'T00:00:00');
   const dlStr = dlDate.toISOString().split('T')[0];
 
@@ -99,10 +91,8 @@ async function checkDrawOnDeadline(phone) {
     if (row['電話號碼'] === phone) {
       const drawTimeStr = row['抽獎時間'];
       if (!drawTimeStr) continue;
-
       const parsedDate = new Date(drawTimeStr);
-      if (isNaN(parsedDate.getTime())) continue; // 無法解析就略過
-
+      if (isNaN(parsedDate.getTime())) continue;
       const recordStr = parsedDate.toISOString().split('T')[0];
       if (recordStr === dlStr) {
         return {
@@ -117,8 +107,7 @@ async function checkDrawOnDeadline(phone) {
 }
 
 /**
- * 寫入抽獎紀錄到「抽獎紀錄」工作表
- * 只寫 A(抽獎時間)、B(電話號碼)、C(中獎獎項) 欄位
+ * 寫入抽獎紀錄 (只寫 A/B/C 三欄)
  */
 async function recordDraw(phone, prize) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
@@ -130,13 +119,12 @@ async function recordDraw(phone, prize) {
   await sheet.addRow({
     '抽獎時間': recordTimeStr,
     '電話號碼': phone,
-    '中獎獎項': prize,
-    // D(到期日), E(兌獎日期) 留空
+    '中獎獎項': prize
   });
 }
 
 /**
- * 查詢紀錄：回傳 A(抽獎時間)、B(電話號碼)、C(中獎獎項)、D(到期日)、E(兌獎日期)
+ * 查詢指定 phone 的紀錄 (回傳 A~E 欄)
  */
 async function queryHistory(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
@@ -154,11 +142,9 @@ async function queryHistory(phone) {
     }));
 }
 
-// =============================================
-// 先配置好 API 路由
-/**
- * GET /api/title
- */
+/******************************************
+ * 下方為 Express 路由
+ ******************************************/
 app.get('/api/title', async (req, res) => {
   try {
     const title = await getSettingValue('title');
@@ -169,9 +155,6 @@ app.get('/api/title', async (req, res) => {
   }
 });
 
-/**
- * GET /api/deadline
- */
 app.get('/api/deadline', async (req, res) => {
   try {
     const deadline = await getSettingValue('deadline');
@@ -182,9 +165,6 @@ app.get('/api/deadline', async (req, res) => {
   }
 });
 
-/**
- * GET /api/prizes
- */
 app.get('/api/prizes', async (req, res) => {
   try {
     const prizes = await getPrizesData();
@@ -195,9 +175,6 @@ app.get('/api/prizes', async (req, res) => {
   }
 });
 
-/**
- * POST /api/check-draw-on-deadline
- */
 app.post('/api/check-draw-on-deadline', async (req, res) => {
   const { phone } = req.body;
   if (!phone) {
@@ -212,9 +189,6 @@ app.post('/api/check-draw-on-deadline', async (req, res) => {
   }
 });
 
-/**
- * POST /api/record-draw
- */
 app.post('/api/record-draw', async (req, res) => {
   const { phone, prize } = req.body;
   if (!phone || !prize) {
@@ -229,9 +203,6 @@ app.post('/api/record-draw', async (req, res) => {
   }
 });
 
-/**
- * POST /api/query-history
- */
 app.post('/api/query-history', async (req, res) => {
   const { phone } = req.body;
   if (!phone) {
@@ -246,20 +217,20 @@ app.post('/api/query-history', async (req, res) => {
   }
 });
 
-// 如果您要同一支服務提供前端 index.html，也可以這樣做：
+// 若要在同一服務中提供 index.html，也可：
 // app.use(express.static(__dirname));
 
-// =============================================
-// 用非同步函式啟動 + 伺服器監聽
-initSheet()
-  .then(() => {
-    // 等待試算表初始化成功後再啟動
+// 初始化並啟動
+async function startServer() {
+  try {
+    await initSheet(); // 完成 Google Sheet 驗證 & 載入
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
-  })
-  .catch(err => {
-    console.error('❌ 初始化 Google Sheet 失敗：', err);
-    process.exit(1); // 視需求可結束程式
-  });
+  } catch (err) {
+    console.error('初始化 Google Sheet 失敗：', err);
+    process.exit(1);
+  }
+}
+startServer();
