@@ -1,154 +1,159 @@
-// server.js
-import express from 'express';
-import cors from 'cors';
-import { google } from 'googleapis';
-import dotenv from 'dotenv';
+/**************************************************
+ * server.js (精簡兩個環境變數版本)
+ **************************************************/
+const express = require('express');
+const cors = require('cors');
+const { google } = require('googleapis');
 
-dotenv.config();
+// 從環境變數讀取
+// GOOGLE_SERVICE_ACCOUNT: 整個 Service Account JSON 的內容
+// GOOGLE_SHEET_ID: 目標 Sheet ID
+const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT || '';
+const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID || '';
 
+// 解析 Service Account JSON
+let clientEmail = '';
+let privateKey = '';
+
+try {
+  const parsed = JSON.parse(serviceAccountJson);
+  clientEmail = parsed.client_email;
+  // 若 \n 被轉義，需要再 replace 一次
+  // privateKey = parsed.private_key.replace(/\\n/g, '\n'); 
+  privateKey = parsed.private_key;
+} catch (err) {
+  console.error('Service Account JSON parse error:', err);
+}
+
+// Google Sheet 表名 (可自行調整)
+const SHEET_NAME_PRIZES = '設定';
+const SHEET_NAME_RECORD = '紀錄';
+
+// 建立 Express App
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
-
-const auth = new google.auth.GoogleAuth({
-  credentials: SERVICE_ACCOUNT,
+// 建立 Google Auth
+const auth = new google.auth.JWT({
+  email: clientEmail,
+  key: privateKey,
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
+// 建立 Sheets API Client
 const sheets = google.sheets({ version: 'v4', auth });
 
-const SHEET_NAMES = {
-  title: '設定',
-  deadline: '設定',
-  prizes: '獎項',
-  record: '抽獎紀錄',
-  history: '歷史紀錄',
-};
-
-// 取得活動標題
-app.get('/api/title', async (req, res) => {
+// ===== 1) 取得獎項與中獎率 =====
+app.get('/prizes', async (req, res) => {
   try {
-    const result = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAMES.title}!B2`,
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME_PRIZES}!A:B`, // A欄獎項, B欄中獎率
     });
-    res.json(result.data.values[0][0]);
-  } catch (err) {
-    console.error('Error fetching title:', err);
-    res.status(500).send('Error fetching title');
-  }
-});
-
-// 取得截止日期
-app.get('/api/deadline', async (req, res) => {
-  try {
-    const result = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAMES.deadline}!B3`,
-    });
-    res.json(result.data.values[0][0]);
-  } catch (err) {
-    console.error('Error fetching deadline:', err);
-    res.status(500).send('Error fetching deadline');
-  }
-});
-
-// 取得獎項清單
-app.get('/api/prizes', async (req, res) => {
-  try {
-    const result = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAMES.prizes}!A2:B`,
-    });
-    const prizes = result.data.values.map(row => ({ name: row[0], rate: row[1] }));
-    res.json(prizes);
-  } catch (err) {
-    console.error('Error fetching prizes:', err);
-    res.status(500).send('Error fetching prizes');
-  }
-});
-
-// 檢查當日是否已抽獎
-app.post('/api/checkDrawOnDeadline', async (req, res) => {
-  const { phone } = req.body;
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const result = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAMES.record}!A2:D`,
-    });
-    const rows = result.data.values || [];
-    const found = rows.find(row => row[0] === phone && row[1]?.startsWith(today));
-    if (found) {
-      res.json({ exists: true, time: found[1], prize: found[2] });
-    } else {
-      res.json({ exists: false });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) {
+      return res.json([]); // 沒資料就回傳空陣列
     }
-  } catch (err) {
-    console.error('Error checking record:', err);
-    res.status(500).send('Error checking draw record');
-  }
-});
 
-// 寫入抽獎紀錄
-app.post('/api/recordDraw', async (req, res) => {
-  const { phone, prize } = req.body;
-  try {
-    const now = new Date();
-    const nowStr = now.toLocaleString('zh-TW', { hour12: false });
-    const expire = new Date(now);
-    expire.setDate(now.getDate() + 6);
-    const expireStr = expire.toISOString().split('T')[0];
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAMES.record}!A:D`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [[phone, nowStr, prize, expireStr]]
-      }
-    });
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAMES.history}!A:E`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [[nowStr, phone, prize, expireStr, '']]
-      }
-    });
-    res.send('OK');
-  } catch (err) {
-    console.error('Error recording draw:', err);
-    res.status(500).send('Error recording draw');
-  }
-});
-
-// 查詢中獎紀錄
-app.get('/api/history', async (req, res) => {
-  const phone = req.query.phone;
-  try {
-    const result = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAMES.history}!A2:E`,
-    });
-    const rows = result.data.values || [];
-    const matched = rows.filter(row => row[1] === phone);
-    const history = matched.map(row => ({
-      time: row[0],
-      prize: row[2],
-      expire: row[3],
-      claimed: row[4] || ''
+    // 假設第一列是標題，從第二列開始解析
+    const prizes = rows.slice(1).map((row) => ({
+      name: row[0],
+      rate: parseFloat(row[1]) || 0,
     }));
-    res.json(history);
+
+    return res.json(prizes);
   } catch (err) {
-    console.error('Error querying history:', err);
-    res.status(500).send('Error querying history');
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to fetch prizes' });
   }
 });
 
+// ===== 2) 抽獎 =====
+app.post('/draw', async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) {
+    return res.status(400).json({ error: '電話號碼必填' });
+  }
+
+  try {
+    // (a) 檢查電話是否已抽過
+    const recordData = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME_RECORD}!A:C`, // A:時間, B:電話, C:獎項
+    });
+
+    let records = recordData.data.values || [];
+    const dataRows = records.slice(1); // 假設第一列是標題
+
+    let found = dataRows.find((row) => row[1] === phone);
+    if (found) {
+      // 已抽過 -> 回傳上次抽獎結果
+      const drawTime = found[0];
+      const prizeName = found[2];
+      return res.json({
+        alreadyDrawn: true,
+        drawTime,
+        prizeName,
+      });
+    }
+
+    // (b) 若未抽過 -> 進行抽獎
+    const prizeResp = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME_PRIZES}!A:B`,
+    });
+    const prizeRows = prizeResp.data.values;
+    if (!prizeRows || prizeRows.length <= 1) {
+      return res.status(400).json({ error: '尚未設定任何獎項' });
+    }
+    const prizes = prizeRows.slice(1).map((row) => ({
+      name: row[0],
+      rate: parseFloat(row[1]) || 0,
+    }));
+
+    // 用加權隨機方式抽出獎項
+    const sumRate = prizes.reduce((acc, p) => acc + p.rate, 0);
+    let rand = Math.random() * sumRate;
+    let selectedPrize = null;
+    for (let p of prizes) {
+      if (rand < p.rate) {
+        selectedPrize = p;
+        break;
+      }
+      rand -= p.rate;
+    }
+    // 若沒抽到 (例如所有 rate=0)，就預設第 1 項
+    if (!selectedPrize) {
+      selectedPrize = prizes[0];
+    }
+
+    const now = new Date().toISOString();
+    const newRecord = [[now, phone, selectedPrize.name]];
+
+    // 寫入紀錄
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME_RECORD}!A:C`,
+      valueInputOption: 'RAW',
+      requestBody: {
+        values: newRecord,
+      },
+    });
+
+    return res.json({
+      alreadyDrawn: false,
+      prizeName: selectedPrize.name,
+      drawTime: now,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: '抽獎失敗，請稍後再試。' });
+  }
+});
+
+// 啟動伺服器
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🎯 Lottery backend running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
