@@ -1,15 +1,16 @@
 {
-  "name": "gas-lottery-backend",
+  "name": "gas-lottery",
   "version": "1.0.0",
-  "type": "commonjs",
-  "main": "server.js",
   "scripts": {
-    "start": "node --openssl-legacy-provider server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "googleapis": "^133.0.0"
+    "body-parser": "^1.20.2",
+    "google-spreadsheet": "^3.3.0"   // 一定要有這個
+    // ...
+  },
+  "engines": {
+    "node": "16.x" // 可指定 Node 版本，避免預設用 14 或 12
   }
 }
