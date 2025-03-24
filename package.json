@@ -1,7 +1,7 @@
 {
   "name": "gas-lottery-backend",
   "version": "1.0.0",
-  "type": "module",
+  "type": "commonjs",
   "main": "server.js",
   "scripts": {
     "start": "node --openssl-legacy-provider server.js"
