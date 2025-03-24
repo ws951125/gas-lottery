@@ -71,8 +71,8 @@ async function getPrizesData() {
   if (!sheet) throw new Error("找不到名為「獎項設定」的工作表");
   const rows = await sheet.getRows();
   return rows.map(r => ({
-    name: r.name,
-    rate: r.rate || '0',
+    name: r['獎項名稱'],
+    rate: r['中獎率'] || '0',
   }));
 }
 
