@@ -256,6 +256,13 @@ app.post('/api/record-draw', async (req, res) => {
     return res.status(400).send("FAIL");
   }
   try {
+    // 先檢查該手機是否在活動截止日已抽過獎
+    const existingRecord = await checkDrawOnDeadline(phone);
+    if (existingRecord.exists) {
+      // 若已有紀錄，回傳已抽過的資訊，不寫入新資料
+      return res.send(`\n您已抽過獎📛\n\n您在📅 ${existingRecord.time}\n\n抽中🎁 ${existingRecord.prize}`);
+    }
+    // 若無抽獎紀錄，則正常寫入抽獎紀錄（含到期日）
     await recordDraw(phone, prize);
     res.send("OK");
   } catch (err) {
