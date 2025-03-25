@@ -251,50 +251,74 @@ app.get('/api/activity-description', async (req, res) => {
 });
 
 
-// server.js - 示範
+// server.js - 抓最新5筆中獎
 app.get('/api/today-winners', async (req, res) => {
   try {
-    // 1) 從「設定」表抓到活動截止日
+    // 1) 讀取「活動截止日」(假設是 '2025/3/26')
     const deadline = await getSettingValue('活動截止日'); 
     if (!deadline) {
-      return res.json([]); // 若無截止日，就回傳空陣列
+      return res.json([]); // 若無截止日設定，直接回傳空
     }
-    // 假設 deadline 是 "2025/03/25"，把它轉成 Date
-    const dlDate = new Date(deadline.trim() + 'T00:00:00');
-    const dlStr = dlDate.toISOString().split('T')[0]; // yyyy-mm-dd
 
-    // 2) 從「抽獎紀錄」表抓取全部紀錄 (您原本的 queryHistory 或 getRecords 之類)
-    const allRecords = await getRecords(); 
-    // 假設 getRecords() 回傳 [{ time, phone, prize, rawTime }, ...]，其中 rawTime = "2025-03-25T14:20:00.000Z"
+    // 2) 為了統一格式，先把「活動截止日」只擷取 'YYYY/M/D'
+    //    避免有 '2025/03/26' 與 '2025/3/26' 不一致
+    const deadlineDatePart = extractDatePart(deadline.trim()); 
+    if (!deadlineDatePart) {
+      return res.json([]); 
+    }
 
-    // 3) 過濾出「抽獎時間」(rawTime) 與 deadline 同一天的紀錄
+    // 3) 取得所有紀錄 (您原本 getRecords 或 queryHistory 之類)
+    const allRecords = await getAllRecords(); 
+    // 4) 過濾：只留下「抽獎時間」日期 == 活動截止日的紀錄
     let filtered = allRecords.filter(r => {
-      if (!r.rawTime) return false;
-      const recDate = new Date(r.rawTime);
-      const recStr = recDate.toISOString().split('T')[0];
-      return recStr === dlStr;
+      // r.time 例如 '2025/3/26 上午 11:20:10'
+      const recDatePart = extractDatePart(r.time); 
+      return (recDatePart === deadlineDatePart);
     });
 
-    // 4) 按中獎時間排序（舊的在前、新的在後）
-    filtered.sort((a, b) => new Date(a.rawTime) - new Date(b.rawTime));
+    // 5) 排序：若您想依時間先後
+    //   （假設 allRecords 每筆有 rawTime 或其他可排序欄位）
+    //   如果只靠 r.time 文字比較，可能要先把上午下午轉成 24小時再比對。
+    //   這裡示範簡單用 rawTime (若有的話)：
+    filtered.sort((a, b) => {
+      if (!a.rawTime || !b.rawTime) return 0; // 若無 rawTime，就不動
+      return new Date(a.rawTime) - new Date(b.rawTime);
+    });
 
-    // 5) 只取最後 5 筆 (或您要全部也行)
+    // 只取最後 5 筆
     if (filtered.length > 5) {
       filtered = filtered.slice(filtered.length - 5);
     }
 
     // 6) 回傳前端需要的欄位
-    //   例如: { time: '2025/03/25 14:20', phone: '0921xxx223', prize: '塑膠針式王籠' }
-    res.json(filtered.map(r => ({
-      time: r.time,
-      phone: r.phone,
-      prize: r.prize
-    })));
+    const result = filtered.map(r => ({
+      time: r.time,     // 例如 '2025/3/26 上午 11:20:10'
+      phone: r.phone,   // '0921xxx223'
+      prize: r.prize    // '塑膠針式王籠'
+    }));
+    return res.json(result);
   } catch (err) {
     console.error(err);
-    res.status(500).json([]);
+    return res.status(500).json([]);
   }
 });
+
+/** 
+ * extractDatePart
+ * 只擷取 'YYYY/M/D' 前綴，忽略「上午/下午」與時分秒 
+ * 範例：
+ *   '2025/03/26 上午 11:20:10' => '2025/03/26'
+ *   '2025/3/26' => '2025/3/26'
+ *   '2025/3/26 12:00:00' => '2025/3/26'
+ */
+function extractDatePart(str) {
+  // 透過正則： /^(\d{4}\/\d{1,2}\/\d{1,2})/
+  // 擷取 YYYY/M/D
+  const match = str.match(/^(\d{4}\/\d{1,2}\/\d{1,2})/);
+  return match ? match[1] : '';
+}
+
+//=============================抓最新5筆中獎
 
 
 
