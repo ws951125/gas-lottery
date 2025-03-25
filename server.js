@@ -19,10 +19,8 @@ const cors = require('cors');
 const app = express();
 app.use(bodyParser.json());
 
-
-//app.use(cors());  //所有網域都可以連
-app.use(cors({ origin: 'https://pro6899.onrender.com' })); //限制網域可連
-
+//app.use(cors());  // 所有網域都可以連
+app.use(cors({ origin: 'https://pro6899.onrender.com' })); // 限制網域可連
 
 // 從環境變數讀取：email / private_key / sheetId
 const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
@@ -39,7 +37,7 @@ if (PRIVATE_KEY) {
 const doc = new GoogleSpreadsheet(SHEET_ID);
 
 /**
- * 初始化 Google Sheet (Node.js 10.x 不允許頂層 await，所以用函式包裝)
+ * 初始化 Google Sheet (Node.js 不允許頂層 await，所以用函式包裝)
  */
 async function initSheet() {
   if (!CLIENT_EMAIL || !PRIVATE_KEY) {
@@ -62,14 +60,10 @@ async function getSettingValue(name) {
   if (!sheet) throw new Error("找不到名為「設定」的工作表");
 
   const rows = await sheet.getRows();
-  // ✅ 如果原本是 r.name === name，就得改成 r["項目"] === name
+  // 注意：使用 r["項目"] 與 r["設定值"]，而非 r.name 或 r.value
   const row = rows.find(r => r["項目"] === name);
-
-  // ✅ 回傳 r["設定值"] 而非 r.value
   return row ? row["設定值"] : '';
 }
-
-
 
 /**
  * 讀取「獎項設定」表的獎項 (name, rate)
@@ -85,6 +79,13 @@ async function getPrizesData() {
 }
 
 /**
+ * 移除電話號碼前導 0
+ */
+function normalizePhone(phone) {
+  return phone.replace(/^0+/, '');
+}
+
+/**
  * 檢查是否在 deadline 那天已經抽過獎 (抽獎紀錄)
  */
 async function checkDrawOnDeadline(phone) {
@@ -93,14 +94,14 @@ async function checkDrawOnDeadline(phone) {
 
   const normalizedPhone = normalizePhone(phone);
 
-  // 從「設定」表抓取「活動截止日」(可能是 "2025/3/25" 或 "2025/03/25"...)
+  // 從「設定」表抓取「活動截止日」(可能是 "2025/3/25"、"2025/03/25"、"2025-03-25" 等)
   const deadlineRaw = await getSettingValue('活動截止日');
   if (!deadlineRaw) {
     return { exists: false };
   }
 
   // 先用 new Date(...) 解析，再轉成同樣的台灣日期格式 "YYYY/MM/DD"
-  const deadlineDate = new Date(deadlineRaw); 
+  const deadlineDate = new Date(deadlineRaw);
   if (isNaN(deadlineDate.getTime())) {
     // 如果解析失敗，直接視為沒有截止日
     return { exists: false };
@@ -117,7 +118,7 @@ async function checkDrawOnDeadline(phone) {
   const rows = await sheet.getRows();
   for (const row of rows) {
     if (row['電話號碼'] === normalizedPhone) {
-      // 假設您剛剛只存 "2025/03/25"；沒有時分秒
+      // 假設您只存 "2025/03/25"；沒有時分秒
       const drawDateStr = row['抽獎時間'];
       if (!drawDateStr) continue;
 
@@ -125,27 +126,7 @@ async function checkDrawOnDeadline(phone) {
       if (drawDateStr === dlStr) {
         return {
           exists: true,
-          time: drawDateStr,         // "2025/03/25"
-          prize: row['中獎獎項'],
-        };
-      }
-    }
-  }
-  return { exists: false };
-}
-
-  // 讀取「抽獎紀錄」的所有列
-  const rows = await sheet.getRows();
-  for (const row of rows) {
-    if (row['電話號碼'] === normalizedPhone) {
-      const drawDateStr = row['抽獎時間']; 
-      if (!drawDateStr) continue;
-
-      // ★ 直接用字串比對：只要同一天就視為已抽過
-      if (drawDateStr === dlStr) {
-        return {
-          exists: true,
-          time: row['抽獎時間'], // 這裡就是 '2025-03-25'
+          time: drawDateStr, // "2025/03/25"
           prize: row['中獎獎項'],
         };
       }
@@ -155,27 +136,20 @@ async function checkDrawOnDeadline(phone) {
 }
 
 /**
- * 寫入抽獎紀錄 (只寫 A/B/C 三欄)
+ * 寫入抽獎紀錄 (只寫 A/B/C 三欄：抽獎時間、電話號碼、中獎獎項)
+ * 這裡只存台灣日期 (YYYY/MM/DD)，不含時分秒
  */
-function normalizePhone(phone) {
-  // 移除前面所有 0
-  return phone.replace(/^0+/, '');
-}
-
 async function recordDraw(phone, prize) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
-
-  const now = new Date();
-  // 使用台灣時區轉換，並產生固定格式的時間字串
+  // 只要台灣日期，不要時分秒
   const recordTimeStr = new Date().toLocaleDateString('zh-TW', {
     timeZone: 'Asia/Taipei',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   });
-  
 
   const normalizedPhone = normalizePhone(phone);
 
@@ -194,8 +168,8 @@ async function queryHistory(phone) {
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
   const normalizedPhone = normalizePhone(phone);
-
   const rows = await sheet.getRows();
+
   return rows
     .filter(r => r['電話號碼'] === normalizedPhone)
     .map(r => ({
@@ -285,9 +259,7 @@ app.post('/api/query-history', async (req, res) => {
 // server.js 範例 (部分)
 app.get('/api/activity-description', async (req, res) => {
   try {
-    // 使用 getSettingValue('活動說明')
     const description = await getSettingValue('活動說明');
-    // 回傳給前端
     res.send(description || '');
   } catch (err) {
     console.error(err);
@@ -295,24 +267,9 @@ app.get('/api/activity-description', async (req, res) => {
   }
 });
 
-
-
-function parseAndFormatAsYYYYMMDD(str) {
-  // 嘗試用 new Date() 先把字串解析出來（如果表格是 2025/3/25、2025/03/25 或 2025-03-25 都能解析）
-  // 然後再用 getTaiwanDateString() 轉成 YYYY-MM-DD (台灣日期)
-  const tempDate = new Date(str);
-  if (isNaN(tempDate.getTime())) {
-    // 如果真的解析失敗，就回傳空字串或直接 throw error
-    return '';
-  }
-  return getTaiwanDateString(tempDate);
-}
-
-
-// 若要在同一服務中提供 index.html，也可：
-// app.use(express.static(__dirname));
-
-// 初始化並啟動
+/**
+ * 初始化並啟動
+ */
 async function startServer() {
   try {
     await initSheet(); // 完成 Google Sheet 驗證 & 載入
