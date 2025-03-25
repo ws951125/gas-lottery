@@ -135,8 +135,19 @@ async function recordDraw(phone, prize) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
+
   const now = new Date();
-  const recordTimeStr = now.toISOString();
+  // 使用台灣時區轉換，並產生固定格式的時間字串
+  const recordTimeStr = now.toLocaleString('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
 
   const normalizedPhone = normalizePhone(phone);
 
