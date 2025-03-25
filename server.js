@@ -93,17 +93,46 @@ async function checkDrawOnDeadline(phone) {
 
   const normalizedPhone = normalizePhone(phone);
 
-  // 從「設定」表抓取活動截止日
-  const deadline = await getSettingValue('活動截止日');
-  if (!deadline) {
+  // 從「設定」表抓取「活動截止日」(可能是 "2025/3/25" 或 "2025/03/25"...)
+  const deadlineRaw = await getSettingValue('活動截止日');
+  if (!deadlineRaw) {
     return { exists: false };
   }
-  // 把 "2025/3/25" 或 "2025-03-25" 轉成 "2025-03-25"
-  const dlStr = parseAndFormatAsYYYYMMDD(deadline);
-  if (!dlStr) {
-    // 解析失敗或格式錯誤
+
+  // 先用 new Date(...) 解析，再轉成同樣的台灣日期格式 "YYYY/MM/DD"
+  const deadlineDate = new Date(deadlineRaw); 
+  if (isNaN(deadlineDate.getTime())) {
+    // 如果解析失敗，直接視為沒有截止日
     return { exists: false };
   }
+  const dlStr = deadlineDate.toLocaleDateString('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  // dlStr 例如 "2025/03/25"
+
+  // 讀取「抽獎紀錄」的所有列
+  const rows = await sheet.getRows();
+  for (const row of rows) {
+    if (row['電話號碼'] === normalizedPhone) {
+      // 假設您剛剛只存 "2025/03/25"；沒有時分秒
+      const drawDateStr = row['抽獎時間'];
+      if (!drawDateStr) continue;
+
+      // 直接用字串比對：只要同一天就視為已抽過
+      if (drawDateStr === dlStr) {
+        return {
+          exists: true,
+          time: drawDateStr,         // "2025/03/25"
+          prize: row['中獎獎項'],
+        };
+      }
+    }
+  }
+  return { exists: false };
+}
 
   // 讀取「抽獎紀錄」的所有列
   const rows = await sheet.getRows();
@@ -140,16 +169,13 @@ async function recordDraw(phone, prize) {
 
   const now = new Date();
   // 使用台灣時區轉換，並產生固定格式的時間字串
-  const recordTimeStr = now.toLocaleString('zh-TW', {
+  const recordTimeStr = new Date().toLocaleDateString('zh-TW', {
     timeZone: 'Asia/Taipei',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
   });
+  
 
   const normalizedPhone = normalizePhone(phone);
 
