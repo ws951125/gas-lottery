@@ -84,39 +84,93 @@ async function getPrizesData() {
   }));
 }
 
-/**
- * 檢查是否在 deadline 那天已經抽過獎 (抽獎紀錄)
- */
+
+// 輔助函式：解析 "YYYY/M/D" → "YYYY-MM-DD"
+function parseSlashDate(str) {
+  const m = str.trim().match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (!m) return null;
+  let [_, year, month, day] = m;
+  if (month.length < 2) month = '0' + month;
+  if (day.length < 2) day = '0' + day;
+  return `${year}-${month}-${day}`; // e.g. "2025-03-26"
+}
+
+// 輔助函式：解析 "YYYY/M/D 上午/下午 H:MM:SS" → Date 物件
+function parseChineseDateTime(str) {
+  const re = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s*(上午|下午)\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/;
+  const match = str.trim().match(re);
+  if (!match) return null;
+  let [_, y, m, d, ampm, hh, mm, ss] = match;
+  if (!ss) ss = '0';
+  y = parseInt(y, 10);
+  m = parseInt(m, 10);
+  d = parseInt(d, 10);
+  hh = parseInt(hh, 10);
+  mm = parseInt(mm, 10);
+  ss = parseInt(ss, 10);
+  if (ampm === '下午' && hh < 12) {
+    hh += 12;
+  }
+  // 若是上午 12 點，依需求可改為 00 (這裡未做轉換)
+  const MM = (m < 10 ? '0' : '') + m;
+  const DD = (d < 10 ? '0' : '') + d;
+  const HH = (hh < 10 ? '0' : '') + hh;
+  const Min = (mm < 10 ? '0' : '') + mm;
+  const Sec = (ss < 10 ? '0' : '') + ss;
+  const isoStr = `${y}-${MM}-${DD}T${HH}:${Min}:${Sec}`;
+  const dateObj = new Date(isoStr);
+  return isNaN(dateObj.getTime()) ? null : dateObj;
+}
+
+
+
+// 修正後的 checkDrawOnDeadline 函式
 async function checkDrawOnDeadline(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
-  const deadline = await getSettingValue('活動截止日');
-  if (!deadline) {
-    return { exists: false };
-  }
-  const dlDate = new Date(deadline + 'T00:00:00');
+  // 標準化電話號碼（去除前置 0）
+  const normalizedPhone = phone.replace(/^0+/, '');
+
+  // 取得活動截止日（假設格式為 "YYYY/M/D"）
+  const rawDeadline = await getSettingValue('活動截止日');
+  if (!rawDeadline) return { exists: false };
+
+  // 解析活動截止日
+  const isoDeadline = parseSlashDate(rawDeadline);
+  if (!isoDeadline) return { exists: false };
+
+  // 建立截止日 Date 物件 (設為午夜)
+  const dlDate = new Date(isoDeadline + 'T00:00:00');
+  if (isNaN(dlDate.getTime())) return { exists: false };
+
   const dlStr = dlDate.toISOString().split('T')[0];
 
+  // 讀取所有抽獎紀錄
   const rows = await sheet.getRows();
   for (const row of rows) {
-    if (row['電話號碼'] === phone) {
+    // 標準化表格內電話號碼（視您寫入時是否有去除前置 0）
+    const rowPhone = row['電話號碼'] ? row['電話號碼'].replace(/^0+/, '') : '';
+    if (rowPhone === normalizedPhone) {
       const drawTimeStr = row['抽獎時間'];
       if (!drawTimeStr) continue;
-      const parsedDate = new Date(drawTimeStr);
-      if (isNaN(parsedDate.getTime())) continue;
+      // 用 parseChineseDateTime 解析抽獎時間
+      const parsedDate = parseChineseDateTime(drawTimeStr);
+      if (!parsedDate) continue;
       const recordStr = parsedDate.toISOString().split('T')[0];
       if (recordStr === dlStr) {
         return {
           exists: true,
           time: row['抽獎時間'],
-          prize: row['中獎獎項'],
+          prize: row['中獎獎項']
         };
       }
     }
   }
   return { exists: false };
 }
+
+
 
 /**
  * 寫入抽獎紀錄 (只寫 A/B/C 三欄)
