@@ -381,7 +381,7 @@ async function startServer() {
     await initSheet(); // 完成 Google Sheet 驗證 & 載入
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
-      console.log(Server is running on port ${PORT});
+      console.log(`Server is running on port ${PORT}`);
     });
   } catch (err) {
     console.error('初始化 Google Sheet 失敗：', err);
