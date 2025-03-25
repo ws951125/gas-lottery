@@ -139,26 +139,48 @@ async function checkDrawOnDeadline(phone) {
  * 寫入抽獎紀錄 (只寫 A/B/C 三欄：抽獎時間、電話號碼、中獎獎項)
  * 這裡只存台灣日期 (YYYY/MM/DD)，不含時分秒
  */
+/**
+ * 寫入抽獎紀錄 (A=抽獎時間, B=電話號碼, C=中獎獎項, D=到期日)
+ */
 async function recordDraw(phone, prize) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
-  // 只要台灣日期，不要時分秒
-  const recordTimeStr = new Date().toLocaleDateString('zh-TW', {
+  // 1. 取得「抽獎日期」（台灣時區，格式 YYYY/MM/DD）
+  const now = new Date();
+  const recordTimeStr = now.toLocaleDateString('zh-TW', {
     timeZone: 'Asia/Taipei',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   });
 
+  // 2. 從「設定」工作表讀取「兌獎有效日期」的天數 (如 6 天)
+  const redemptionDaysRaw = await getSettingValue("兌獎有效日期");
+  // 若解析失敗則預設 0
+  const redemptionDays = parseInt(redemptionDaysRaw, 10) || 0;
+
+  // 3. 計算「到期日」= (現在時間 + 兌獎有效日期的天數)
+  const expireTime = new Date(now.getTime() + redemptionDays * 24 * 60 * 60 * 1000);
+  const expireDateStr = expireTime.toLocaleDateString('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  // 4. 處理電話號碼前導 0
   const normalizedPhone = normalizePhone(phone);
 
+  // 5. 將 A/B/C/D 欄一次寫入
   await sheet.addRow({
-    '抽獎時間': recordTimeStr,
-    '電話號碼': normalizedPhone,
-    '中獎獎項': prize
+    '抽獎時間': recordTimeStr,     // A 欄
+    '電話號碼': normalizedPhone,   // B 欄
+    '中獎獎項': prize,            // C 欄
+    '到期日': expireDateStr        // D 欄
   });
 }
+
 
 /**
  * 查詢指定 phone 的紀錄 (回傳 A~E 欄)
