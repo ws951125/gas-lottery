@@ -303,6 +303,20 @@ app.get('/api/today-winners', async (req, res) => {
   }
 });
 
+async function getAllRecords() {
+  const sheet = doc.sheetsByTitle['抽獎紀錄'];
+  if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
+
+  const rows = await sheet.getRows();
+  return rows.map(r => ({
+    time: r['抽獎時間'] || '',
+    phone: r['電話號碼'] || '',
+    prize: r['中獎獎項'] || '',
+    rawTime: r.rawTime || '',  // 如果您有存 ISO 格式
+  }));
+}
+
+
 /** 
  * extractDatePart
  * 只擷取 'YYYY/M/D' 前綴，忽略「上午/下午」與時分秒 
