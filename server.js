@@ -251,6 +251,54 @@ app.get('/api/activity-description', async (req, res) => {
 });
 
 
+// server.js - 示範
+app.get('/api/today-winners', async (req, res) => {
+  try {
+    // 1) 從「設定」表抓到活動截止日
+    const deadline = await getSettingValue('活動截止日'); 
+    if (!deadline) {
+      return res.json([]); // 若無截止日，就回傳空陣列
+    }
+    // 假設 deadline 是 "2025/03/25"，把它轉成 Date
+    const dlDate = new Date(deadline.trim() + 'T00:00:00');
+    const dlStr = dlDate.toISOString().split('T')[0]; // yyyy-mm-dd
+
+    // 2) 從「抽獎紀錄」表抓取全部紀錄 (您原本的 queryHistory 或 getRecords 之類)
+    const allRecords = await getRecords(); 
+    // 假設 getRecords() 回傳 [{ time, phone, prize, rawTime }, ...]，其中 rawTime = "2025-03-25T14:20:00.000Z"
+
+    // 3) 過濾出「抽獎時間」(rawTime) 與 deadline 同一天的紀錄
+    let filtered = allRecords.filter(r => {
+      if (!r.rawTime) return false;
+      const recDate = new Date(r.rawTime);
+      const recStr = recDate.toISOString().split('T')[0];
+      return recStr === dlStr;
+    });
+
+    // 4) 按中獎時間排序（舊的在前、新的在後）
+    filtered.sort((a, b) => new Date(a.rawTime) - new Date(b.rawTime));
+
+    // 5) 只取最後 5 筆 (或您要全部也行)
+    if (filtered.length > 5) {
+      filtered = filtered.slice(filtered.length - 5);
+    }
+
+    // 6) 回傳前端需要的欄位
+    //   例如: { time: '2025/03/25 14:20', phone: '0921xxx223', prize: '塑膠針式王籠' }
+    res.json(filtered.map(r => ({
+      time: r.time,
+      phone: r.phone,
+      prize: r.prize
+    })));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json([]);
+  }
+});
+
+
+
+
 // 若要在同一服務中提供 index.html，也可：
 // app.use(express.static(__dirname));
 
