@@ -38,55 +38,6 @@ if (PRIVATE_KEY) {
 // 建立 GoogleSpreadsheet 實例
 const doc = new GoogleSpreadsheet(SHEET_ID);
 
-
-function parseSlashDate(str) {
-  const m = str.trim().match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
-  if (!m) return null;
-  let [_, year, mon, day] = m;
-  if (mon.length < 2) mon = '0' + mon;
-  if (day.length < 2) day = '0' + day;
-  return `${year}-${mon}-${day}`; // e.g. '2025-03-26'
-}
-
-/** 
- * ② 解析「YYYY/M/D 上午/下午 H:MM:SS」→ Date 物件 (若失敗回傳 null)
- *   範例： '2025/3/25 下午 3:08:20'
- */
-function parseChineseDateTime(str) {
-  const re = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s*(上午|下午)\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/;
-  const match = str.trim().match(re);
-  if (!match) return null;
-
-  let [_, y, m, d, ampm, hh, mm, ss] = match;
-  if (!ss) ss = '0'; // 預設秒=0
-  y = parseInt(y, 10);
-  m = parseInt(m, 10);
-  d = parseInt(d, 10);
-  hh = parseInt(hh, 10);
-  mm = parseInt(mm, 10);
-  ss = parseInt(ss, 10);
-
-  // 若「下午」且 hh<12 => hh+=12
-  if (ampm === '下午' && hh < 12) {
-    hh += 12;
-  }
-  // 若「上午」且 hh=12 => 可能 hh=0 (依您需求)
-
-  // 補零
-  const MM = (m<10?'0':'') + m;
-  const DD = (d<10?'0':'') + d;
-  const HH = (hh<10?'0':'') + hh;
-  const Min = (mm<10?'0':'') + mm;
-  const Sec = (ss<10?'0':'') + ss;
-
-  // 組成 "YYYY-MM-DDTHH:MM:SS"
-  const isoStr = `${y}-${MM}-${DD}T${HH}:${Min}:${Sec}`;
-  const dateObj = new Date(isoStr);
-  if (isNaN(dateObj.getTime())) return null;
-  return dateObj;
-}
-
-
 /**
  * 初始化 Google Sheet (Node.js 10.x 不允許頂層 await，所以用函式包裝)
  */
@@ -136,59 +87,26 @@ async function getPrizesData() {
 /**
  * 檢查是否在 deadline 那天已經抽過獎 (抽獎紀錄)
  */
-/**
- * 檢查是否在「活動截止日」那天已抽過獎
- * ★ 在此處用 parseSlashDate + parseChineseDateTime
- */
 async function checkDrawOnDeadline(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
-  // 1) 去除前置 0，確保與表內電話號碼一致
-  const normalizedPhone = phone.replace(/^0+/, '');
-
-  // 2) 取得「活動截止日」(e.g. "2025/3/26")
-  const rawDeadline = await getSettingValue('活動截止日');
-  if (!rawDeadline) {
+  const deadline = await getSettingValue('活動截止日');
+  if (!deadline) {
     return { exists: false };
   }
-
-  // 3) 解析「活動截止日」 => "YYYY-MM-DD"
-  const isoDate = parseSlashDate(rawDeadline.trim());
-  if (!isoDate) {
-    // 若解析失敗 => 視為無截止日
-    return { exists: false };
-  }
-
-  // 4) 建立 Date 物件 => e.g. "2025-03-26T00:00:00"
-  const dlDate = new Date(isoDate + 'T00:00:00');
-  if (isNaN(dlDate.getTime())) {
-    return { exists: false };
-  }
-  // 拿到 "2025-03-26"
+  const dlDate = new Date(deadline + 'T00:00:00');
   const dlStr = dlDate.toISOString().split('T')[0];
 
-  // 5) 讀取「抽獎紀錄」所有列
   const rows = await sheet.getRows();
-
   for (const row of rows) {
-    // 假設表裡電話號碼已經沒有前置0
-    // 若有前置0，請看您實際如何寫入
-    if (row['電話號碼'] === normalizedPhone) {
+    if (row['電話號碼'] === phone) {
       const drawTimeStr = row['抽獎時間'];
       if (!drawTimeStr) continue;
-
-      // 6) 解析「抽獎時間」=> Date
-      const parsedDate = parseChineseDateTime(drawTimeStr);
-      if (!parsedDate) {
-        // 解析失敗 => 跳過
-        continue;
-      }
-
-      // 7) 比對日期 => "YYYY-MM-DD"
+      const parsedDate = new Date(drawTimeStr);
+      if (isNaN(parsedDate.getTime())) continue;
       const recordStr = parsedDate.toISOString().split('T')[0];
       if (recordStr === dlStr) {
-        // 代表在截止日當天抽過
         return {
           exists: true,
           time: row['抽獎時間'],
@@ -197,41 +115,28 @@ async function checkDrawOnDeadline(phone) {
       }
     }
   }
-
-  // 若整個迴圈沒找到 => 尚未抽過
   return { exists: false };
 }
 
-
-
 /**
- * ★★ CHANGED: 寫入抽獎紀錄 (A=抽獎時間, B=電話, C=中獎獎項, D=到期日)
- *   D 欄 = 抽獎時間 + 「兌獎有效日期」天數
+ * 寫入抽獎紀錄 (只寫 A/B/C 三欄)
  */
+function normalizePhone(phone) {
+  // 移除前面所有 0
+  return phone.replace(/^0+/, '');
+}
 
 async function recordDraw(phone, prize) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
-  // 1) 取得「兌獎有效日期」(天數)
-  const validDaysStr = await getSettingValue('兌獎有效日期'); 
-  const validDays = parseInt(validDaysStr, 10) || 0;
-
-  // 2) 抽獎時間 => now
   const now = new Date();
   const recordTimeStr = now.toLocaleString('zh-TW', { hour12: false });
 
-  // 3) 到期日 => now + validDays
-  const expire = new Date(now);
-  expire.setDate(expire.getDate() + validDays);
-  const expireStr = expire.toLocaleString('zh-TW', { hour12: false });
-
-  // 4) 寫入 (A=抽獎時間, B=電話號碼, C=中獎獎項, D=到期日)
   await sheet.addRow({
     '抽獎時間': recordTimeStr,
     '電話號碼': phone,
-    '中獎獎項': prize,
-    '到期日': expireStr
+    '中獎獎項': prize
   });
 }
 
@@ -290,12 +195,6 @@ app.get('/api/prizes', async (req, res) => {
   }
 });
 
-
-/** 
- * 前端若要單獨檢查，也可用這個 endpoint
- * 但最終 /api/record-draw 也會再次檢查
- */
-
 app.post('/api/check-draw-on-deadline', async (req, res) => {
   const { phone } = req.body;
   if (!phone) {
@@ -310,39 +209,19 @@ app.post('/api/check-draw-on-deadline', async (req, res) => {
   }
 });
 
-/**
- * ★★ CHANGED: /api/record-draw
- *   1) 先檢查是否已在截止日當天抽過 => 若是 => 回傳舊紀錄(您原先的「已抽過獎」邏輯)
- *   2) 若尚未 => 寫入(含 D欄 到期日)
- */
-
 app.post('/api/record-draw', async (req, res) => {
   const { phone, prize } = req.body;
   if (!phone || !prize) {
     return res.status(400).send("FAIL");
   }
   try {
-    // 1) 檢查是否已在「活動截止日」當天抽過
-    const check = await checkDrawOnDeadline(phone);
-    if (check.exists) {
-      // ★ 已抽過 => 回傳舊紀錄(比照您原先前端會顯示的「您已抽過獎…」)
-      return res.json({
-        status: 'alreadyDrawn',
-        time: check.time,
-        prize: check.prize
-      });
-    }
-
-    // 2) 若尚未 => 寫入紀錄 (含到期日)
     await recordDraw(phone, prize);
-    return res.send("OK");
+    res.send("OK");
   } catch (err) {
     console.error(err);
     res.status(500).send("FAIL");
   }
 });
-
-
 
 app.post('/api/query-history', async (req, res) => {
   const { phone } = req.body;
@@ -467,7 +346,7 @@ async function startServer() {
     await initSheet(); // 完成 Google Sheet 驗證 & 載入
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
+      console.log(Server is running on port ${PORT});
     });
   } catch (err) {
     console.error('初始化 Google Sheet 失敗：', err);
