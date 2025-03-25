@@ -237,6 +237,20 @@ app.post('/api/query-history', async (req, res) => {
   }
 });
 
+// server.js 範例 (部分)
+app.get('/api/activity-description', async (req, res) => {
+  try {
+    // 使用 getSettingValue('活動說明')
+    const description = await getSettingValue('活動說明');
+    // 回傳給前端
+    res.send(description || '');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('');
+  }
+});
+
+
 // 若要在同一服務中提供 index.html，也可：
 // app.use(express.static(__dirname));
 
