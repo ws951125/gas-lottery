@@ -154,10 +154,9 @@ async function queryHistory(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
+  const normalizedPhone = normalizePhone(phone);
+
   const rows = await sheet.getRows();
-  
-  const normalizedPhone = phone.replace(/^0+/, '');
-  
   return rows
     .filter(r => r['電話號碼'] === normalizedPhone)
     .map(r => ({
