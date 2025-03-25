@@ -3,7 +3,7 @@
  *   使用三個工作表：
  *     - 獎項設定: name, rate
  *     - 抽獎紀錄: A=抽獎時間, B=電話號碼, C=中獎獎項, D=到期日, E=兌獎日期
- *     - 設定: name, value (包含 title / deadline / 兌獎有效日期)
+ *     - 設定: name, value (包含 title / deadline)
  *
  * 環境變數需設：
  *   - GOOGLE_CLIENT_EMAIL (e.g. lottery-service@xxx.iam.gserviceaccount.com)
@@ -19,8 +19,10 @@ const cors = require('cors');
 const app = express();
 app.use(bodyParser.json());
 
+
 //app.use(cors());  //所有網域都可以連
 app.use(cors({ origin: 'https://pro6899.onrender.com' })); //限制網域可連
+
 
 // 從環境變數讀取：email / private_key / sheetId
 const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
@@ -28,6 +30,7 @@ let PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
 // 如果 Render 後台把真正換行變成 \n，您可再 replace 回來
+// （若本身就已經是多行 PEM，則可省略這行）
 if (PRIVATE_KEY) {
   PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, '\n');
 }
@@ -36,12 +39,13 @@ if (PRIVATE_KEY) {
 const doc = new GoogleSpreadsheet(SHEET_ID);
 
 /**
- * 初始化 Google Sheet
+ * 初始化 Google Sheet (Node.js 10.x 不允許頂層 await，所以用函式包裝)
  */
 async function initSheet() {
   if (!CLIENT_EMAIL || !PRIVATE_KEY) {
     throw new Error('缺少 GOOGLE_CLIENT_EMAIL 或 GOOGLE_PRIVATE_KEY');
   }
+
   await doc.useServiceAccountAuth({
     client_email: CLIENT_EMAIL,
     private_key: PRIVATE_KEY,
@@ -51,16 +55,21 @@ async function initSheet() {
 }
 
 /**
- * 讀取「設定」表中指定項目的「設定值」(B欄)
+ * 讀取「設定」表中指定 name 的 value
  */
 async function getSettingValue(name) {
   const sheet = doc.sheetsByTitle['設定'];
   if (!sheet) throw new Error("找不到名為「設定」的工作表");
 
   const rows = await sheet.getRows();
+  // ✅ 如果原本是 r.name === name，就得改成 r["項目"] === name
   const row = rows.find(r => r["項目"] === name);
+
+  // ✅ 回傳 r["設定值"] 而非 r.value
   return row ? row["設定值"] : '';
 }
+
+
 
 /**
  * 讀取「獎項設定」表的獎項 (name, rate)
@@ -76,7 +85,7 @@ async function getPrizesData() {
 }
 
 /**
- * 檢查是否在 "活動截止日" 那天已經抽過獎 (抽獎紀錄)
+ * 檢查是否在 deadline 那天已經抽過獎 (抽獎紀錄)
  */
 async function checkDrawOnDeadline(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
@@ -86,12 +95,7 @@ async function checkDrawOnDeadline(phone) {
   if (!deadline) {
     return { exists: false };
   }
-
-  // 將 deadline 轉成 YYYY-MM-DD
   const dlDate = new Date(deadline + 'T00:00:00');
-  if (isNaN(dlDate.getTime())) {
-    return { exists: false };
-  }
   const dlStr = dlDate.toISOString().split('T')[0];
 
   const rows = await sheet.getRows();
@@ -103,7 +107,6 @@ async function checkDrawOnDeadline(phone) {
       if (isNaN(parsedDate.getTime())) continue;
       const recordStr = parsedDate.toISOString().split('T')[0];
       if (recordStr === dlStr) {
-        // ★★ 已抽過 => 回傳該筆時間 & 獎項
         return {
           exists: true,
           time: row['抽獎時間'],
@@ -119,6 +122,7 @@ async function checkDrawOnDeadline(phone) {
  * ★★ CHANGED: 寫入抽獎紀錄 (A=抽獎時間, B=電話, C=中獎獎項, D=到期日)
  *   D 欄 = 抽獎時間 + 「兌獎有效日期」天數
  */
+
 async function recordDraw(phone, prize) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
@@ -153,8 +157,11 @@ async function queryHistory(phone) {
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
   const rows = await sheet.getRows();
+  
+  const normalizedPhone = phone.replace(/^0+/, '');
+  
   return rows
-    .filter(r => r['電話號碼'] === phone)
+    .filter(r => r['電話號碼'] === normalizedPhone)
     .map(r => ({
       time: r['抽獎時間'] || '',
       phone: r['電話號碼'] || '',
@@ -197,10 +204,12 @@ app.get('/api/prizes', async (req, res) => {
   }
 });
 
+
 /** 
  * 前端若要單獨檢查，也可用這個 endpoint
  * 但最終 /api/record-draw 也會再次檢查
  */
+
 app.post('/api/check-draw-on-deadline', async (req, res) => {
   const { phone } = req.body;
   if (!phone) {
@@ -220,6 +229,7 @@ app.post('/api/check-draw-on-deadline', async (req, res) => {
  *   1) 先檢查是否已在截止日當天抽過 => 若是 => 回傳舊紀錄(您原先的「已抽過獎」邏輯)
  *   2) 若尚未 => 寫入(含 D欄 到期日)
  */
+
 app.post('/api/record-draw', async (req, res) => {
   const { phone, prize } = req.body;
   if (!phone || !prize) {
@@ -246,6 +256,8 @@ app.post('/api/record-draw', async (req, res) => {
   }
 });
 
+
+
 app.post('/api/query-history', async (req, res) => {
   const { phone } = req.body;
   if (!phone) {
@@ -260,9 +272,12 @@ app.post('/api/query-history', async (req, res) => {
   }
 });
 
+// server.js 範例 (部分)
 app.get('/api/activity-description', async (req, res) => {
   try {
+    // 使用 getSettingValue('活動說明')
     const description = await getSettingValue('活動說明');
+    // 回傳給前端
     res.send(description || '');
   } catch (err) {
     console.error(err);
@@ -270,8 +285,95 @@ app.get('/api/activity-description', async (req, res) => {
   }
 });
 
+
+// server.js - 抓最新5筆中獎
+app.get('/api/today-winners', async (req, res) => {
+  try {
+    // 1) 讀取「活動截止日」(假設是 '2025/3/26')
+    const deadline = await getSettingValue('活動截止日'); 
+    if (!deadline) {
+      return res.json([]); // 若無截止日設定，直接回傳空
+    }
+
+    // 2) 為了統一格式，先把「活動截止日」只擷取 'YYYY/M/D'
+    //    避免有 '2025/03/26' 與 '2025/3/26' 不一致
+    const deadlineDatePart = extractDatePart(deadline.trim()); 
+    if (!deadlineDatePart) {
+      return res.json([]); 
+    }
+
+    // 3) 取得所有紀錄 (您原本 getRecords 或 queryHistory 之類)
+    const allRecords = await getAllRecords(); 
+    // 4) 過濾：只留下「抽獎時間」日期 == 活動截止日的紀錄
+    let filtered = allRecords.filter(r => {
+      // r.time 例如 '2025/3/26 上午 11:20:10'
+      const recDatePart = extractDatePart(r.time); 
+      return (recDatePart === deadlineDatePart);
+    });
+
+    // 5) 排序：若您想依時間先後
+    //   （假設 allRecords 每筆有 rawTime 或其他可排序欄位）
+    //   如果只靠 r.time 文字比較，可能要先把上午下午轉成 24小時再比對。
+    //   這裡示範簡單用 rawTime (若有的話)：
+    filtered.sort((a, b) => {
+      if (!a.rawTime || !b.rawTime) return 0; // 若無 rawTime，就不動
+      return new Date(a.rawTime) - new Date(b.rawTime);
+    });
+
+    // 只取最後 5 筆
+    if (filtered.length > 5) {
+      filtered = filtered.slice(filtered.length - 5);
+    }
+
+    // 6) 回傳前端需要的欄位
+    const result = filtered.map(r => ({
+      time: r.time,     // 例如 '2025/3/26 上午 11:20:10'
+      phone: r.phone,   // '0921xxx223'
+      prize: r.prize    // '塑膠針式王籠'
+    }));
+    return res.json(result);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json([]);
+  }
+});
+
+async function getAllRecords() {
+  const sheet = doc.sheetsByTitle['抽獎紀錄'];
+  if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
+
+  const rows = await sheet.getRows();
+  return rows.map(r => ({
+    time: r['抽獎時間'] || '',
+    phone: r['電話號碼'] || '',
+    prize: r['中獎獎項'] || '',
+    rawTime: r.rawTime || '',  // 如果您有存 ISO 格式
+  }));
+}
+
+
+/** 
+ * extractDatePart
+ * 只擷取 'YYYY/M/D' 前綴，忽略「上午/下午」與時分秒 
+ * 範例：
+ *   '2025/03/26 上午 11:20:10' => '2025/03/26'
+ *   '2025/3/26' => '2025/3/26'
+ *   '2025/3/26 12:00:00' => '2025/3/26'
+ */
+function extractDatePart(str) {
+  // 透過正則： /^(\d{4}\/\d{1,2}\/\d{1,2})/
+  // 擷取 YYYY/M/D
+  const match = str.match(/^(\d{4}\/\d{1,2}\/\d{1,2})/);
+  return match ? match[1] : '';
+}
+
 //=============================抓最新5筆中獎
-// (省略您原先 today-winners / extractDatePart / getAllRecords... ) 
+
+
+
+
+// 若要在同一服務中提供 index.html，也可：
+// app.use(express.static(__dirname));
 
 // 初始化並啟動
 async function startServer() {
@@ -279,7 +381,7 @@ async function startServer() {
     await initSheet(); // 完成 Google Sheet 驗證 & 載入
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
+      console.log(Server is running on port ${PORT});
     });
   } catch (err) {
     console.error('初始化 Google Sheet 失敗：', err);
