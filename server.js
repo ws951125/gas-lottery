@@ -85,7 +85,7 @@ async function getPrizesData() {
 }
 
 
-// 輔助函式：解析 "YYYY/M/D" → "YYYY-MM-DD"
+// 輔助函式：解析 "YYYY/M/D" 格式為 "YYYY-MM-DD"
 function parseSlashDate(str) {
   const m = str.trim().match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
   if (!m) return null;
@@ -95,7 +95,7 @@ function parseSlashDate(str) {
   return `${year}-${month}-${day}`; // e.g. "2025-03-26"
 }
 
-// 輔助函式：解析 "YYYY/M/D 上午/下午 H:MM:SS" → Date 物件
+// 輔助函式：解析 "YYYY/M/D 上午/下午 H:MM:SS" 為 Date 物件
 function parseChineseDateTime(str) {
   const re = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s*(上午|下午)\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/;
   const match = str.trim().match(re);
@@ -111,7 +111,6 @@ function parseChineseDateTime(str) {
   if (ampm === '下午' && hh < 12) {
     hh += 12;
   }
-  // 若是上午 12 點，依需求可改為 00 (這裡未做轉換)
   const MM = (m < 10 ? '0' : '') + m;
   const DD = (d < 10 ? '0' : '') + d;
   const HH = (hh < 10 ? '0' : '') + hh;
@@ -122,39 +121,38 @@ function parseChineseDateTime(str) {
   return isNaN(dateObj.getTime()) ? null : dateObj;
 }
 
-
-
 // 修正後的 checkDrawOnDeadline 函式
 async function checkDrawOnDeadline(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
-  // 標準化電話號碼（去除前置 0）
+  // 將輸入電話去除前置 0，以保證和表格內一致
   const normalizedPhone = phone.replace(/^0+/, '');
 
-  // 取得活動截止日（假設格式為 "YYYY/M/D"）
+  // 取得「活動截止日」，格式假設為 "YYYY/M/D"
   const rawDeadline = await getSettingValue('活動截止日');
   if (!rawDeadline) return { exists: false };
 
-  // 解析活動截止日
+  // 將截止日轉換成 ISO 格式字串 (例如 "2025-03-26")
   const isoDeadline = parseSlashDate(rawDeadline);
   if (!isoDeadline) return { exists: false };
 
-  // 建立截止日 Date 物件 (設為午夜)
+  // 建立截止日 Date 物件（設定為當天 00:00:00）
   const dlDate = new Date(isoDeadline + 'T00:00:00');
   if (isNaN(dlDate.getTime())) return { exists: false };
 
+  // 取得截止日的日期字串，如 "2025-03-26"
   const dlStr = dlDate.toISOString().split('T')[0];
 
   // 讀取所有抽獎紀錄
   const rows = await sheet.getRows();
   for (const row of rows) {
-    // 標準化表格內電話號碼（視您寫入時是否有去除前置 0）
+    // 若表格內電話也有前置 0，請先做相同處理
     const rowPhone = row['電話號碼'] ? row['電話號碼'].replace(/^0+/, '') : '';
     if (rowPhone === normalizedPhone) {
       const drawTimeStr = row['抽獎時間'];
       if (!drawTimeStr) continue;
-      // 用 parseChineseDateTime 解析抽獎時間
+      // 使用 parseChineseDateTime 解析抽獎時間字串
       const parsedDate = parseChineseDateTime(drawTimeStr);
       if (!parsedDate) continue;
       const recordStr = parsedDate.toISOString().split('T')[0];
