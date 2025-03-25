@@ -144,37 +144,51 @@ async function checkDrawOnDeadline(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
+  // 1) 去除前置 0，確保與表內電話號碼一致
+  const normalizedPhone = phone.replace(/^0+/, '');
+
+  // 2) 取得「活動截止日」(e.g. "2025/3/26")
   const rawDeadline = await getSettingValue('活動截止日');
   if (!rawDeadline) {
     return { exists: false };
   }
-  // ① parse "2025/3/26" => "2025-03-26"
+
+  // 3) 解析「活動截止日」 => "YYYY-MM-DD"
   const isoDate = parseSlashDate(rawDeadline.trim());
   if (!isoDate) {
-    // 若無法解析 => 視為無截止日
+    // 若解析失敗 => 視為無截止日
     return { exists: false };
   }
-  // ② 建立 Date 物件 => "2025-03-26T00:00:00"
+
+  // 4) 建立 Date 物件 => e.g. "2025-03-26T00:00:00"
   const dlDate = new Date(isoDate + 'T00:00:00');
   if (isNaN(dlDate.getTime())) {
     return { exists: false };
   }
-  // ③ 拿 dlDate => toISOString => "2025-03-26"
+  // 拿到 "2025-03-26"
   const dlStr = dlDate.toISOString().split('T')[0];
 
-  // 讀取所有抽獎紀錄
+  // 5) 讀取「抽獎紀錄」所有列
   const rows = await sheet.getRows();
+
   for (const row of rows) {
-    if (row['電話號碼'] === phone) {
+    // 假設表裡電話號碼已經沒有前置0
+    // 若有前置0，請看您實際如何寫入
+    if (row['電話號碼'] === normalizedPhone) {
       const drawTimeStr = row['抽獎時間'];
       if (!drawTimeStr) continue;
 
-      // ★ 用 parseChineseDateTime
+      // 6) 解析「抽獎時間」=> Date
       const parsedDate = parseChineseDateTime(drawTimeStr);
-      if (!parsedDate) continue; // 若無法解析就跳過
+      if (!parsedDate) {
+        // 解析失敗 => 跳過
+        continue;
+      }
 
+      // 7) 比對日期 => "YYYY-MM-DD"
       const recordStr = parsedDate.toISOString().split('T')[0];
       if (recordStr === dlStr) {
+        // 代表在截止日當天抽過
         return {
           exists: true,
           time: row['抽獎時間'],
@@ -183,6 +197,8 @@ async function checkDrawOnDeadline(phone) {
       }
     }
   }
+
+  // 若整個迴圈沒找到 => 尚未抽過
   return { exists: false };
 }
 
