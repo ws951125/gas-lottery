@@ -131,7 +131,7 @@ async function recordDraw(phone, prize) {
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
   const now = new Date();
-  const recordTimeStr = now.toLocaleString('zh-TW', { hour12: false });
+  const recordTimeStr = now.toISOString();
 
   await sheet.addRow({
     '抽獎時間': recordTimeStr,
