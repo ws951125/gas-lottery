@@ -91,6 +91,8 @@ async function checkDrawOnDeadline(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
+  const normalizedPhone = normalizePhone(phone);
+
   const deadline = await getSettingValue('活動截止日');
   if (!deadline) {
     return { exists: false };
@@ -100,11 +102,14 @@ async function checkDrawOnDeadline(phone) {
 
   const rows = await sheet.getRows();
   for (const row of rows) {
-    if (row['電話號碼'] === phone) {
+    // 以正規化後的號碼比對
+    if (row['電話號碼'] === normalizedPhone) {
       const drawTimeStr = row['抽獎時間'];
       if (!drawTimeStr) continue;
+
       const parsedDate = new Date(drawTimeStr);
       if (isNaN(parsedDate.getTime())) continue;
+
       const recordStr = parsedDate.toISOString().split('T')[0];
       if (recordStr === dlStr) {
         return {
@@ -133,9 +138,11 @@ async function recordDraw(phone, prize) {
   const now = new Date();
   const recordTimeStr = now.toISOString();
 
+  const normalizedPhone = normalizePhone(phone);
+
   await sheet.addRow({
     '抽獎時間': recordTimeStr,
-    '電話號碼': phone,
+    '電話號碼': normalizedPhone,
     '中獎獎項': prize
   });
 }
