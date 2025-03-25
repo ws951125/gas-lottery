@@ -84,91 +84,39 @@ async function getPrizesData() {
   }));
 }
 
-
-// 輔助函式：解析 "YYYY/M/D" 格式為 "YYYY-MM-DD"
-function parseSlashDate(str) {
-  const m = str.trim().match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
-  if (!m) return null;
-  let [_, year, month, day] = m;
-  if (month.length < 2) month = '0' + month;
-  if (day.length < 2) day = '0' + day;
-  return `${year}-${month}-${day}`; // e.g. "2025-03-26"
-}
-
-// 輔助函式：解析 "YYYY/M/D 上午/下午 H:MM:SS" 為 Date 物件
-function parseChineseDateTime(str) {
-  const re = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s*(上午|下午)\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/;
-  const match = str.trim().match(re);
-  if (!match) return null;
-  let [_, y, m, d, ampm, hh, mm, ss] = match;
-  if (!ss) ss = '0';
-  y = parseInt(y, 10);
-  m = parseInt(m, 10);
-  d = parseInt(d, 10);
-  hh = parseInt(hh, 10);
-  mm = parseInt(mm, 10);
-  ss = parseInt(ss, 10);
-  if (ampm === '下午' && hh < 12) {
-    hh += 12;
-  }
-  const MM = (m < 10 ? '0' : '') + m;
-  const DD = (d < 10 ? '0' : '') + d;
-  const HH = (hh < 10 ? '0' : '') + hh;
-  const Min = (mm < 10 ? '0' : '') + mm;
-  const Sec = (ss < 10 ? '0' : '') + ss;
-  const isoStr = `${y}-${MM}-${DD}T${HH}:${Min}:${Sec}`;
-  const dateObj = new Date(isoStr);
-  return isNaN(dateObj.getTime()) ? null : dateObj;
-}
-
-// 修正後的 checkDrawOnDeadline 函式
+/**
+ * 檢查是否在 deadline 那天已經抽過獎 (抽獎紀錄)
+ */
 async function checkDrawOnDeadline(phone) {
   const sheet = doc.sheetsByTitle['抽獎紀錄'];
   if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
 
-  // 將輸入電話去除前置 0，以保證和表格內一致
-  const normalizedPhone = phone.replace(/^0+/, '');
-
-  // 取得「活動截止日」，格式假設為 "YYYY/M/D"
-  const rawDeadline = await getSettingValue('活動截止日');
-  if (!rawDeadline) return { exists: false };
-
-  // 將截止日轉換成 ISO 格式字串 (例如 "2025-03-26")
-  const isoDeadline = parseSlashDate(rawDeadline);
-  if (!isoDeadline) return { exists: false };
-
-  // 建立截止日 Date 物件（設定為當天 00:00:00）
-  const dlDate = new Date(isoDeadline + 'T00:00:00');
-  if (isNaN(dlDate.getTime())) return { exists: false };
-
-  // 取得截止日的日期字串，如 "2025-03-26"
+  const deadline = await getSettingValue('活動截止日');
+  if (!deadline) {
+    return { exists: false };
+  }
+  const dlDate = new Date(deadline + 'T00:00:00');
   const dlStr = dlDate.toISOString().split('T')[0];
 
-  // 讀取所有抽獎紀錄
   const rows = await sheet.getRows();
   for (const row of rows) {
-    // 若表格內電話也有前置 0，請先做相同處理
-    const rowPhone = row['電話號碼'] ? row['電話號碼'].replace(/^0+/, '') : '';
-    if (rowPhone === normalizedPhone) {
+    if (row['電話號碼'] === phone) {
       const drawTimeStr = row['抽獎時間'];
       if (!drawTimeStr) continue;
-      // 使用 parseChineseDateTime 解析抽獎時間字串
-      const parsedDate = parseChineseDateTime(drawTimeStr);
-      if (!parsedDate) continue;
+      const parsedDate = new Date(drawTimeStr);
+      if (isNaN(parsedDate.getTime())) continue;
       const recordStr = parsedDate.toISOString().split('T')[0];
       if (recordStr === dlStr) {
         return {
           exists: true,
           time: row['抽獎時間'],
-          prize: row['中獎獎項']
+          prize: row['中獎獎項'],
         };
       }
     }
   }
   return { exists: false };
 }
-
-
 
 /**
  * 寫入抽獎紀錄 (只寫 A/B/C 三欄)
@@ -288,106 +236,6 @@ app.post('/api/query-history', async (req, res) => {
     res.status(500).json([]);
   }
 });
-
-// server.js 範例 (部分)
-app.get('/api/activity-description', async (req, res) => {
-  try {
-    // 使用 getSettingValue('活動說明')
-    const description = await getSettingValue('活動說明');
-    // 回傳給前端
-    res.send(description || '');
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('');
-  }
-});
-
-
-// server.js - 抓最新5筆中獎
-app.get('/api/today-winners', async (req, res) => {
-  try {
-    // 1) 讀取「活動截止日」(假設是 '2025/3/26')
-    const deadline = await getSettingValue('活動截止日'); 
-    if (!deadline) {
-      return res.json([]); // 若無截止日設定，直接回傳空
-    }
-
-    // 2) 為了統一格式，先把「活動截止日」只擷取 'YYYY/M/D'
-    //    避免有 '2025/03/26' 與 '2025/3/26' 不一致
-    const deadlineDatePart = extractDatePart(deadline.trim()); 
-    if (!deadlineDatePart) {
-      return res.json([]); 
-    }
-
-    // 3) 取得所有紀錄 (您原本 getRecords 或 queryHistory 之類)
-    const allRecords = await getAllRecords(); 
-    // 4) 過濾：只留下「抽獎時間」日期 == 活動截止日的紀錄
-    let filtered = allRecords.filter(r => {
-      // r.time 例如 '2025/3/26 上午 11:20:10'
-      const recDatePart = extractDatePart(r.time); 
-      return (recDatePart === deadlineDatePart);
-    });
-
-    // 5) 排序：若您想依時間先後
-    //   （假設 allRecords 每筆有 rawTime 或其他可排序欄位）
-    //   如果只靠 r.time 文字比較，可能要先把上午下午轉成 24小時再比對。
-    //   這裡示範簡單用 rawTime (若有的話)：
-    filtered.sort((a, b) => {
-      if (!a.rawTime || !b.rawTime) return 0; // 若無 rawTime，就不動
-      return new Date(a.rawTime) - new Date(b.rawTime);
-    });
-
-    // 只取最後 5 筆
-    if (filtered.length > 5) {
-      filtered = filtered.slice(filtered.length - 5);
-    }
-
-    // 6) 回傳前端需要的欄位
-    const result = filtered.map(r => ({
-      time: r.time,     // 例如 '2025/3/26 上午 11:20:10'
-      phone: r.phone,   // '0921xxx223'
-      prize: r.prize    // '塑膠針式王籠'
-    }));
-    return res.json(result);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json([]);
-  }
-});
-
-async function getAllRecords() {
-  const sheet = doc.sheetsByTitle['抽獎紀錄'];
-  if (!sheet) throw new Error("找不到名為「抽獎紀錄」的工作表");
-
-  const rows = await sheet.getRows();
-  return rows.map(r => ({
-    time: r['抽獎時間'] || '',
-    phone: r['電話號碼'] || '',
-    prize: r['中獎獎項'] || '',
-    rawTime: r.rawTime || '',  // 如果您有存 ISO 格式
-  }));
-}
-
-
-/** 
- * extractDatePart
- * 只擷取 'YYYY/M/D' 前綴，忽略「上午/下午」與時分秒 
- * 範例：
- *   '2025/03/26 上午 11:20:10' => '2025/03/26'
- *   '2025/3/26' => '2025/3/26'
- *   '2025/3/26 12:00:00' => '2025/3/26'
- */
-function extractDatePart(str) {
-  // 透過正則： /^(\d{4}\/\d{1,2}\/\d{1,2})/
-  // 擷取 YYYY/M/D
-  const match = str.match(/^(\d{4}\/\d{1,2}\/\d{1,2})/);
-  return match ? match[1] : '';
-}
-
-//=============================抓最新5筆中獎
-
-
-
 
 // 若要在同一服務中提供 index.html，也可：
 // app.use(express.static(__dirname));
