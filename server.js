@@ -93,28 +93,30 @@ async function checkDrawOnDeadline(phone) {
 
   const normalizedPhone = normalizePhone(phone);
 
+  // 從「設定」表抓取活動截止日
   const deadline = await getSettingValue('活動截止日');
   if (!deadline) {
     return { exists: false };
   }
-  const dlDate = new Date(deadline + 'T00:00:00');
-  const dlStr = dlDate.toISOString().split('T')[0];
+  // 把 "2025/3/25" 或 "2025-03-25" 轉成 "2025-03-25"
+  const dlStr = parseAndFormatAsYYYYMMDD(deadline);
+  if (!dlStr) {
+    // 解析失敗或格式錯誤
+    return { exists: false };
+  }
 
+  // 讀取「抽獎紀錄」的所有列
   const rows = await sheet.getRows();
   for (const row of rows) {
-    // 以正規化後的號碼比對
     if (row['電話號碼'] === normalizedPhone) {
-      const drawTimeStr = row['抽獎時間'];
-      if (!drawTimeStr) continue;
+      const drawDateStr = row['抽獎時間']; 
+      if (!drawDateStr) continue;
 
-      const parsedDate = new Date(drawTimeStr);
-      if (isNaN(parsedDate.getTime())) continue;
-
-      const recordStr = parsedDate.toISOString().split('T')[0];
-      if (recordStr === dlStr) {
+      // ★ 直接用字串比對：只要同一天就視為已抽過
+      if (drawDateStr === dlStr) {
         return {
           exists: true,
-          time: row['抽獎時間'],
+          time: row['抽獎時間'], // 這裡就是 '2025-03-25'
           prize: row['中獎獎項'],
         };
       }
@@ -266,6 +268,19 @@ app.get('/api/activity-description', async (req, res) => {
     res.status(500).send('');
   }
 });
+
+
+
+function parseAndFormatAsYYYYMMDD(str) {
+  // 嘗試用 new Date() 先把字串解析出來（如果表格是 2025/3/25、2025/03/25 或 2025-03-25 都能解析）
+  // 然後再用 getTaiwanDateString() 轉成 YYYY-MM-DD (台灣日期)
+  const tempDate = new Date(str);
+  if (isNaN(tempDate.getTime())) {
+    // 如果真的解析失敗，就回傳空字串或直接 throw error
+    return '';
+  }
+  return getTaiwanDateString(tempDate);
+}
 
 
 // 若要在同一服務中提供 index.html，也可：
