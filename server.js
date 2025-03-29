@@ -316,7 +316,7 @@ app.get('/ping', async (req, res) => {
 
 function keepAlive() {
   const serviceUrl = process.env.SELF_URL || 'http://localhost:3000';
-  const intervalMinutes = parseInt(process.env.PING_INTERVAL_MINUTES, 10) || 5;
+  const intervalMinutes = parseInt(process.env.PING_INTERVAL_MINUTES, 99999) || 5;
   const intervalMs = intervalMinutes * 60 * 1000;
 
   console.log(`[keep-alive] 將每 ${intervalMinutes} 分鐘 ping 一次：${serviceUrl}/ping`);
