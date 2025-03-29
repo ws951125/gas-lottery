@@ -37,8 +37,6 @@ if (PRIVATE_KEY) {
 
 // 建立 GoogleSpreadsheet 實例
 const doc = new GoogleSpreadsheet(SHEET_ID);
-let sheetReady = false;
-
 
 /**
  * 初始化 Google Sheet (Node.js 不允許頂層 await，所以用函式包裝)
@@ -54,7 +52,6 @@ async function initSheet() {
   });
   await doc.loadInfo();
   console.log('✅ 已成功載入 Google 試算表：', doc.title);
-  sheetReady = true; // ⬅️ 加這行
 }
 
 /**
@@ -301,22 +298,13 @@ app.get('/api/activity-description', async (req, res) => {
   }
 });
 
-app.get('/ping', async (req, res) => {
-  try {
-    if (!sheetReady) await initSheet(); // ⬅️ 確保 ping 時已初始化
-    const title = await getSettingValue('主網頁標題'); // ⬅️ 呼叫實際資料
-    res.status(200).send('pong + title=' + title);
-  } catch (err) {
-    console.error('[ping] 初始化錯誤:', err);
-    res.status(500).send('ping failed');
-  }
+app.get('/ping', (req, res) => {
+  res.status(200).send('pong');
 });
-
-
 
 function keepAlive() {
   const serviceUrl = process.env.SELF_URL || 'http://localhost:3000';
-  const intervalMinutes = parseInt(process.env.PING_INTERVAL_MINUTES, 99999) || 5;
+  const intervalMinutes = parseInt(process.env.PING_INTERVAL_MINUTES, 10) || 10;
   const intervalMs = intervalMinutes * 60 * 1000;
 
   console.log(`[keep-alive] 將每 ${intervalMinutes} 分鐘 ping 一次：${serviceUrl}/ping`);
