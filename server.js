@@ -16,6 +16,8 @@ const bodyParser = require('body-parser');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const cors = require('cors');
 
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
 const app = express();
 app.use(bodyParser.json());
 
@@ -296,19 +298,48 @@ app.get('/api/activity-description', async (req, res) => {
   }
 });
 
+app.get('/ping', (req, res) => {
+  res.status(200).send('pong');
+});
+
+function keepAlive() {
+  const serviceUrl = process.env.SELF_URL || 'http://localhost:3000';
+  const intervalMinutes = parseInt(process.env.PING_INTERVAL_MINUTES, 10) || 10;
+  const intervalMs = intervalMinutes * 60 * 1000;
+
+  console.log(`[keep-alive] 將每 ${intervalMinutes} 分鐘 ping 一次：${serviceUrl}/ping`);
+
+  setInterval(async () => {
+    const now = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+    try {
+      const res = await fetch(`${serviceUrl}/ping`);
+      const text = await res.text();
+      console.log(`[${now}] [keep-alive] 成功 ping: ${text}`);
+    } catch (err) {
+      console.error(`[${now}] [keep-alive] ping 失敗:`, err);
+    }
+  }, intervalMs);
+}
+
+
+
 /**
  * 初始化並啟動
  */
 async function startServer() {
   try {
-    await initSheet(); // 完成 Google Sheet 驗證 & 載入
+    await initSheet();
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
+
+    keepAlive(); // ⬅️ 啟動定時自 ping 功能
   } catch (err) {
     console.error('初始化 Google Sheet 失敗：', err);
     process.exit(1);
   }
 }
+
+
 startServer();
