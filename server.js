@@ -39,6 +39,7 @@ if (PRIVATE_KEY) {
 const doc = new GoogleSpreadsheet(SHEET_ID);
 let sheetReady = false;
 
+
 /**
  * 初始化 Google Sheet (Node.js 不允許頂層 await，所以用函式包裝)
  */
@@ -54,7 +55,6 @@ async function initSheet() {
   await doc.loadInfo();
   console.log('✅ 已成功載入 Google 試算表：', doc.title);
   sheetReady = true; // ⬅️ 加這行
-  
 }
 
 /**
@@ -291,6 +291,16 @@ app.post('/api/query-history', async (req, res) => {
 });
 
 // server.js 範例 (部分)
+app.get('/api/activity-description', async (req, res) => {
+  try {
+    const description = await getSettingValue('活動說明');
+    res.send(description || '');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('');
+  }
+});
+
 app.get('/ping', async (req, res) => {
   try {
     if (!sheetReady) await initSheet(); // ⬅️ 確保 ping 時已初始化
@@ -303,10 +313,6 @@ app.get('/ping', async (req, res) => {
 });
 
 
-
-app.get('/ping', (req, res) => {
-  res.status(200).send('pong');
-});
 
 function keepAlive() {
   const serviceUrl = process.env.SELF_URL || 'http://localhost:3000';
