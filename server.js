@@ -60,16 +60,35 @@ async function initSheet() {
 /**
  * 讀取「設定」表中指定 name 的 value
  */
+// 🔧 加上快取記憶功能
+const settingCache = new Map();
+
 async function getSettingValue(name) {
+  const cacheKey = name;
+  const now = Date.now();
+  const cacheDurationMs = 5 * 60 * 1000; // 快取 5 分鐘
+
+  // 若快取中有資料且未過期，就直接回傳
+  if (settingCache.has(cacheKey)) {
+    const { value, timestamp } = settingCache.get(cacheKey);
+    if (now - timestamp < cacheDurationMs) {
+      return value;
+    }
+  }
+
+  // 讀 Google Sheet
   const sheet = doc.sheetsByTitle['設定'];
   if (!sheet) throw new Error("找不到名為「設定」的工作表");
 
   const rows = await sheet.getRows();
-  // 注意：使用 r["項目"] 與 r["設定值"]，而非 r.name 或 r.value
   const row = rows.find(r => r["項目"] === name);
-  return row ? row["設定值"] : '';
-}
+  const value = row ? row["設定值"] : '';
 
+  // 記錄到快取中
+  settingCache.set(cacheKey, { value, timestamp: now });
+
+  return value;
+}
 /**
  * 讀取「獎項設定」表的獎項 (name, rate)
  */
